@@ -29,7 +29,7 @@ func ConnecRedisGraph(userID int32) {
 
 	graph := rg.GraphNew("kingtalk", conn)
 
-	query := fmt.Sprintf(`MATCH (us {UserID:%d}) RETURN COUNT(us) AS data`, userID)
+	query := fmt.Sprintf(`MATCH (us {UserID:%d})-[i:Inbox]-(ud:User) RETURN i,ud,COUNT(us) AS data`, userID)
 
 	result, _ := graph.Query(query)
 
@@ -37,6 +37,13 @@ func ConnecRedisGraph(userID int32) {
 		for result.Next() {
 			record, _ := result.Record().Get("data")
 			fmt.Printf("data := %v , userID :=%d  \n", record, userID)
+
+			CountIB, _ := result.Record().Get("i")
+			countIbox := CountIB.(*rg.Edge).Properties["Count"]
+			fmt.Printf("count := %v , userID :=%d  \n", countIbox, userID)
+
+			Participant, _ := result.Record().Get("ud")
+			fmt.Printf("ParticipantID  := %v , userID :=%d  \n", Participant, userID)
 		}
 
 	}
