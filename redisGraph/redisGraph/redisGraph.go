@@ -2,13 +2,19 @@ package redisgraph
 
 import (
 	"fmt"
+	"test/user"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
 	rg "github.com/redislabs/redisgraph-go"
+	"gorm.io/gorm"
 )
 
-func ConnecRedisGraph(userID int32) {
+type Server struct {
+	Db *gorm.DB
+}
+
+func ConnecRedisGraph() redis.Pool {
 	// mapUserID := make(map[int32]int32)
 	t := time.Second
 	pool := &redis.Pool{
@@ -24,27 +30,139 @@ func ConnecRedisGraph(userID int32) {
 			return conn, err
 		},
 	}
+	return *pool
 
-	conn := pool.Get()
+}
 
-	graph := rg.GraphNew("kingtalk", conn)
+func QueryGraph(userID int32) []user.UsersData {
 
-	query := fmt.Sprintf(`MATCH (us {UserID:%d})-[i:Inbox]-(ud:User) RETURN i,ud,COUNT(us) AS data`, userID)
+	conn := ConnecRedisGraph()
+
+	graph := rg.GraphNew("kingtalk", conn.Get())
+
+	query := fmt.Sprintf(`MATCH (us {UserID:%d})-[i:Inbox]-(ud:User) RETURN i, ud.UserID`, userID)
+
+	result, _ := graph.Query(query)
+
+	m := make(map[string]bool)
+
+	list := []user.UsersData{}
+
+	if result != nil {
+		for result.Next() {
+			CountIB, _ := result.Record().Get("i")
+			countIbox := CountIB.(*rg.Edge).Properties["Count"]
+			// fmt.Printf("count := %d   \n", countIbox.(int))
+			if countIbox == nil {
+				continue
+			}
+			c := countIbox.(int)
+			if c == 0 {
+				continue
+			}
+
+			Participant, _ := result.Record().Get("ud.UserID")
+			// fmt.Printf("ParticipantID  := %v , userID :=%d  \n", Participant, userID)
+			p := Participant.(int)
+
+			key := genKey(int32(p), userID)
+
+			if exist, _ := m[key]; !exist {
+				list = append(list, user.UsersData{
+					UserID:      userID,
+					Participant: int32(p),
+					CountInbox:  int32(c),
+				})
+				m[key] = true
+			}
+		}
+
+		return list
+
+	}
+	return list
+
+}
+
+func genKey(p int32, u int32) string {
+	if p > u {
+		p, u = u, p
+	}
+	return fmt.Sprintf("%d-%d", p, u)
+}
+
+func DeleteArray(list []user.UsersData, p int32) []user.UsersData {
+	for i := 0; i < len(list)-1; i++ {
+		if list[i].Participant == p {
+			list = append(list[:i+1], list[i+2:]...)
+		}
+	}
+	return list
+}
+
+func (s *Server) CreateDB(u, p, c int32) {
+	err := user.CreateUser(s.Db, u, p, c)
+	if err != nil {
+		fmt.Println(err)
+	}
+}
+
+func (s *Server) CreateMultiDB(u []user.UsersData) {
+	err := user.CreateMultiUser(s.Db, u)
+	if err != nil {
+		fmt.Println(err)
+	}
+}
+
+func DeleteNode(userID int32) {
+	conn := ConnecRedisGraph()
+
+	graph := rg.GraphNew("kingtalk", conn.Get())
+
+	query := fmt.Sprintf(`MATCH (us {UserID:%d} DELETE us`, userID)
 
 	result, _ := graph.Query(query)
 
 	if result != nil {
-		for result.Next() {
-			record, _ := result.Record().Get("data")
-			fmt.Printf("data := %v , userID :=%d  \n", record, userID)
+		fmt.Println(result)
+	}
+}
 
-			CountIB, _ := result.Record().Get("i")
-			countIbox := CountIB.(*rg.Edge).Properties["Count"]
-			fmt.Printf("count := %v , userID :=%d  \n", countIbox, userID)
+func CreateNode(userID int32) {
+	conn := ConnecRedisGraph()
 
-			Participant, _ := result.Record().Get("ud")
-			fmt.Printf("ParticipantID  := %v , userID :=%d  \n", Participant, userID)
+	graph := rg.GraphNew("kingtalk", conn.Get())
+
+	query := fmt.Sprintf(`MATCH (us:User {UserID: %d}) RETURN us.User`, userID)
+
+	result, _ := graph.Query(query)
+
+	fmt.Println("ngoai vong for")
+
+	// query := fmt.Sprintf("CREATE  (us:User {UserID:%d})", userID)
+	for !result.Next() {
+
+		fmt.Println("trong vong for")
+		query2 := fmt.Sprintf(`CREATE (us:User {UserID: %d})`, userID)
+
+		graph.Query(query2)
+
+		fmt.Println(graph.Query(query2))
+	}
+
+}
+
+func CreateEdge(c, p, u int32) {
+	conn := ConnecRedisGraph()
+
+	if c != 0 {
+		graph := rg.GraphNew("kingtalk", conn.Get())
+		query := fmt.Sprintf(`MATCH (us:User {UserID: %d}), (ud:User {UserID: %d})
+							  MERGE (us)-[i:Inbox {Count:%d}]->(ud)`, u, p, c)
+
+		result, _ := graph.Query(query)
+		if result != nil {
+			fmt.Println(result)
 		}
-
 	}
 }
